@@ -1,0 +1,155 @@
+// Source: 3.2.2.2 Cú pháp
+package com.example.demo.repository;
+
+import com.example.demo.model.Product;
+import javax.sql.DataSource;
+import java.sql.*;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+public class ProductJdbcRepositoryImpl implements ProductJdbcRepository {
+
+    private final DataSource dataSource;
+
+    public ProductJdbcRepositoryImpl(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    // CREATE (Có thu hồi Generated ID)
+    @Override
+    public Product save(Product product) {
+        String sql = """
+            INSERT INTO products (name, price, stock_quantity, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            pstmt.setString(1, product.getName());
+            pstmt.setBigDecimal(2, product.getPrice());
+            pstmt.setInt(3, product.getStockQuantity());
+            pstmt.setBoolean(4, product.getIsActive());
+
+            LocalDateTime now = LocalDateTime.now();
+            pstmt.setTimestamp(5, Timestamp.valueOf(now));
+
+            int affectedRows = pstmt.executeUpdate();
+            if (affectedRows == 0) {
+                throw new SQLException("Creating product failed, no rows affected.");
+            }
+
+            // Lấy ID tự sinh từ DB engine
+            try (ResultSet generatedKeys = pstmt.getGeneratedKeys()) {
+                if (generatedKeys.next()) {
+                    product.setId(generatedKeys.getLong(1));
+                    product.setCreatedAt(now);
+                } else {
+                    throw new SQLException("Creating product failed, no ID obtained.");
+                }
+            }
+            return product;
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error during save: " + e.getMessage(), e);
+        }
+    }
+
+    // READ (Find by ID)
+    @Override
+    public Optional<Product> findById(Long id) {
+        String sql = "SELECT id, name, price, stock_quantity, is_active, created_at FROM products WHERE id = ?";
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setLong(1, id);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapRowToProduct(rs));
+                }
+                return Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error finding by ID: " + e.getMessage(), e);
+        }
+    }
+
+    // READ (Find All)
+    @Override
+    public List<Product> findAll() {
+        String sql = "SELECT id, name, price, stock_quantity, is_active, created_at FROM products";
+        List<Product> products = new ArrayList<>();
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+
+            while (rs.next()) {
+                products.add(mapRowToProduct(rs));
+            }
+            return products;
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error finding all: " + e.getMessage(), e);
+        }
+    }
+
+    // UPDATE
+    @Override
+    public boolean update(Product product) {
+        String sql = """
+            UPDATE products
+            SET name = ?, price = ?, stock_quantity = ?, is_active = ?
+            WHERE id = ?
+        """;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, product.getName());
+            pstmt.setBigDecimal(2, product.getPrice());
+            pstmt.setInt(3, product.getStockQuantity());
+            pstmt.setBoolean(4, product.getIsActive());
+            pstmt.setLong(5, product.getId());
+
+            int affectedRows = pstmt.executeUpdate();
+            return affectedRows > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error updating product: " + e.getMessage(), e);
+        }
+    }
+
+    // DELETE
+    @Override
+    public boolean deleteById(Long id) {
+        String sql = "DELETE FROM products WHERE id = ?";
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setLong(1, id);
+            int affectedRows = pstmt.executeUpdate();
+            return affectedRows > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error deleting product: " + e.getMessage(), e);
+        }
+    }
+
+    // Helper map ResultSet sang Object (Xử lý an toàn Null/Data types)
+    private Product mapRowToProduct(ResultSet rs) throws SQLException {
+        Product p = new Product();
+        p.setId(rs.getLong("id"));
+        p.setName(rs.getString("name"));
+        p.setPrice(rs.getBigDecimal("price"));
+        p.setStockQuantity(rs.getInt("stock_quantity"));
+        p.setIsActive(rs.getBoolean("is_active"));
+
+        Timestamp timestamp = rs.getTimestamp("created_at");
+        if (timestamp != null) {
+            p.setCreatedAt(timestamp.toLocalDateTime());
+        }
+        return p;
+    }
+}
